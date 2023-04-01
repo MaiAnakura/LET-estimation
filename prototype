@@ -1,0 +1,332 @@
+import pydicom,glob,os,sys,math
+import numpy as np
+
+os.chdir(XXX) #Current directory setting.Put the absolute path inside ().
+
+#Get the number of beams from the number of dose data.
+i=0
+files = glob.glob(YYY) #Put the patient file path in ().
+for file in files:
+    data=pydicom.dcmread(file)
+    if data.SOPClassUID == '1.2.840.10008.5.1.4.1.1.481.2': #There is one physical dose data and one clinical dose data per beam, and one combined dose data.
+        i=i+1 #Count the number of dose data.
+        num=int(i/2) #Get the number of beams.That is obtained by dividing the total number of dose data by 2, and truncating after the decimal point.
+        image_e=data.pixel_array[:,:,:]* data.DoseGridScaling #Returns normalized dose data to true values. Also get the 3D range where the dose data is stored.
+  
+#Prepare several frames to store each value.
+image_p=image_e
+image=image_e
+total=image_e
+total_letdose=np.zeros_like((image_e))
+total_dose=np.zeros_like((image_e))
+
+#Get physical dose and clinical dose data in order of beam number and return them to true values.
+for i in range(num):
+    files=glob.glob(YYY) #Put the patient file path in ().
+    for file in files:
+        data=pydicom.dcmread(file)
+        if data.SOPClassUID == '1.2.840.10008.5.1.4.1.1.481.2' and data[0x3004,0x000A].value=='BEAM' and data[0x3004,0x0004].value == 'EFFECTIVE' and data[0x300C,0x0002][0][0x300C,0x0020][0][0x300C,0x0004][0][0x300C,0x0006].value == i+1 :
+            image_e=data.pixel_array[:,:,:]* data.DoseGridScaling
+            break
+           
+    for file in files:
+        data=pydicom.dcmread(file)
+        if data.SOPClassUID == '1.2.840.10008.5.1.4.1.1.481.2' and data[0x3004,0x000A].value=='BEAM' and data[0x3004,0x0004].value == 'PHYSICAL' and data[0x300C,0x0002][0][0x300C,0x0020][0][0x300C,0x0004][0][0x300C,0x0006].value == i+1 :
+            image_p=data.pixel_array[:,:,:]* data.DoseGridScaling
+            break    
+       
+    iso_eDose=plan[0x300A,0x0070][i][0x300C,0x0004][0][0x2111,0x103B].value #The effective dose at the isocenter
+    iso_pDose=plan[0x300A,0x0070][i][0x300C,0x0004][0][0x300A,0x0084].value #The physical dose at the isocenter
+    iso_RBE=float(iso_eDose)/iso_pDose #Get the RBE at the isocenter.
+    Energy=plan[0x300A,0x03A2][i][0x300A,0x03A8][0][0x300A,0x0114].value #The beam energy
+    SOBP=(int)(plan[0x300A,0x03A2][i][0x300A,0x03A8][0][0x300A,0x0380][0][0x300A,0x0388].value+0.5) #The SOBP size
+    
+    rbe0=np.where(image_p== 0, 0, image_e/image_p*iso_RBE) #Get the RBE in each plane.
+    rbeth2=rbe0
+    rbe0_diff_x1=rbe0
+    rbe0_diff_x1=np.diff(rbe0,n=1,axis=1,append=0)
+    rbe0_diff_xx=np.roll(rbe0_diff_x1,1,axis=1)
+    rbe0_diff_y1=np.diff(rbe0,n=1,axis=2,append=0)
+    rbe0_diff_yy=np.roll(rbe0_diff_y1,1,axis=2)
+    rbeth2=(abs(rbe0_diff_x1)+abs(rbe0_diff_xx))/(2*data[0x0028,0x0030].value[0])+(abs(rbe0_diff_y1)+abs(rbe0_diff_yy))/(2*data[0x0028,0x0030].value[1]) #Get vertical and horizontal derivatives of RBE in each plane.
+ 
+#Estimate LET from RBE in each case.
+   
+#Energy==290     
+    if Energy==290 and SOBP==30:#(rBEth=2.47)
+     rbe0_1= np.where((image_p>=0.305)&(image_p<0.781)&(rbeth2>0.399),(12.321*math.log(SOBP)-148.32)*(rbe0**2)+(-101.1*math.log(SOBP)+1056.4)*rbe0+182.03*math.log(SOBP)-1635,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 68*rbe0_1-132,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 42.5*rbe1-55.5,rbe1)
+     rbe3= np.where((rbe2>= 2.47) & (rbe2< 2.6) , 40*rbe2-49,rbe2)
+     rbe4= np.where((rbe3>= 1) & (rbe3< 2.47) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==290 and SOBP==40:#(rBEth=2.329)
+     rbe0_1= np.where((image_p>=0.304)&(image_p<0.751)&(rbeth2>0.399),(12.321*math.log(SOBP)-148.32)*(rbe0**2)+(-101.1*math.log(SOBP)+1056.4)*rbe0+182.03*math.log(SOBP)-1635,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 68*rbe0_1-132,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 42.5*rbe1-55.5,rbe1)
+     rbe3= np.where((rbe2>= 2.329) & (rbe2< 2.6) , 40*rbe2-49,rbe2)
+     rbe4= np.where((rbe3>= 1) & (rbe3< 2.329) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==290 and SOBP==50:#(rBEth=2.235)
+     rbe0_1= np.where((image_p>=0.286)&(image_p<0.709)&(rbeth2>0.399),(12.321*math.log(SOBP)-148.32)*(rbe0**2)+(-101.1*math.log(SOBP)+1056.4)*rbe0+182.03*math.log(SOBP)-1635,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 68*rbe0_1-132,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 42.5*rbe1-55.5,rbe1)
+     rbe3= np.where((rbe2>= 2.235) & (rbe2< 2.6) , 40*rbe2-49,rbe2)
+     rbe4= np.where((rbe3>= 1) & (rbe3< 2.235) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==290 and SOBP==60:#(rBEth=2.154)
+     rbe0_1= np.where((image_p>=0.278)&(image_p<0.757)&(rbeth2>0.399),(12.321*math.log(SOBP)-148.32)*(rbe0**2)+(-101.1*math.log(SOBP)+1056.4)*rbe0+182.03*math.log(SOBP)-1635,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 68*rbe0_1-132,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 42.5*rbe1-55.5,rbe1)
+     rbe3= np.where((rbe2>= 2.154) & (rbe2< 2.6) , 40*rbe2-49,rbe2)
+     rbe4= np.where((rbe3>= 1) & (rbe3< 2.154) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==290 and SOBP==70:#(rBEth=2.09)
+     rbe0_1= np.where((image_p>=0.274)&(image_p<0.720)&(rbeth2>0.399),(12.321*math.log(SOBP)-148.32)*(rbe0**2)+(-101.1*math.log(SOBP)+1056.4)*rbe0+182.03*math.log(SOBP)-1635,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 68*rbe0_1-132,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 42.5*rbe1-55.5,rbe1)
+     rbe3= np.where((rbe2>= 2.09) & (rbe2< 2.6) , 40*rbe2-49,rbe2)
+     rbe4= np.where((rbe3>= 1) & (rbe3< 2.09) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==290 and SOBP==80:#(rBEth=2.036)
+     rbe0_1= np.where((image_p>=0.276)&(image_p<0.731)&(rbeth2>0.399),(12.321*math.log(SOBP)-148.32)*(rbe0**2)+(-101.1*math.log(SOBP)+1056.4)*rbe0+182.03*math.log(SOBP)-1635,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 68*rbe0_1-132,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 42.5*rbe1-55.5,rbe1)
+     rbe3= np.where((rbe2>= 2.036) & (rbe2< 2.6) , 40*rbe2-49,rbe2)
+     rbe4= np.where((rbe3>= 1) & (rbe3< 2.036) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==290 and SOBP==90:#(rBEth=1.988)
+     rbe0_1= np.where((image_p>=0.278)&(image_p<0.677)&(rbeth2>0.399),(12.321*math.log(SOBP)-148.32)*(rbe0**2)+(-101.1*math.log(SOBP)+1056.4)*rbe0+182.03*math.log(SOBP)-1635,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 68*rbe0_1-132,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 42.5*rbe1-55.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 40*rbe2-49,rbe2)
+     rbe4= np.where((rbe3>= 1.988) & (rbe3< 2.0) , 31*rbe3-31,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4< 1.988) ,28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+     
+    if Energy==290 and SOBP==100:#(rBEth=1.953)
+     rbe0_1= np.where((image_p>=0.257)&(image_p<0.727)&(rbeth2>0.399),(12.321*math.log(SOBP)-148.32)*(rbe0**2)+(-101.1*math.log(SOBP)+1056.4)*rbe0+182.03*math.log(SOBP)-1635,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 68*rbe0_1-132,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 42.5*rbe1-55.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 40*rbe2-49,rbe2)
+     rbe4= np.where((rbe3>= 1.953) & (rbe3< 2.0) , 31*rbe3-31,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4<1.953) ,28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+     
+    if Energy==290 and SOBP==110:#(rBEth=1.918)
+     rbe0_1= np.where((image_p>=0.260)&(image_p<0.678)&(rbeth2>0.399),(12.321*math.log(SOBP)-148.32)*(rbe0**2)+(-101.1*math.log(SOBP)+1056.4)*rbe0+182.03*math.log(SOBP)-1635,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 68*rbe0_1-132,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 42.5*rbe1-55.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 40*rbe2-49,rbe2)
+     rbe4= np.where((rbe3>= 1.918) & (rbe3< 2.0) , 31*rbe3-31,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4<1.918) ,28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+     
+    if Energy==290 and SOBP==120:#(rBEth=1.888)
+     rbe0_1= np.where((image_p>=0.217)&(image_p<0.653)&(rbeth2>0.399),(12.321*math.log(SOBP)-148.32)*(rbe0**2)+(-101.1*math.log(SOBP)+1056.4)*rbe0+182.03*math.log(SOBP)-1635,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 68*rbe0_1-132,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 42.5*rbe1-55.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 40*rbe2-49,rbe2)
+     rbe4= np.where((rbe3>= 1.888) & (rbe3< 2.0) , 31*rbe3-31,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4<1.888) ,28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5) 
+     
+#Energy==380
+    if Energy==380 and SOBP==30:#(rBEth=2.419) 
+     rbe0_1= np.where((image_p>=0.511)&(image_p<0.785)&(rbeth2>0.296),(10.292*math.log(SOBP)-29.9)*(rbe0**2)+(-59.544*math.log(SOBP)+273.83)*rbe0+88.676*math.log(SOBP)-445.726,rbe0)    
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-202,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 67.5*rbe1-119.5,rbe1)
+     rbe3= np.where((rbe2>= 2.419) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>=1) & (rbe3< 2.419) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+    
+    if Energy==380 and SOBP==40:#(rBEth=2.282)  
+     rbe0_1= np.where((image_p>=0.487)&(image_p<0.749)&(rbeth2>0.296),(10.292*math.log(SOBP)-29.9)*(rbe0**2)+(-59.544*math.log(SOBP)+273.83)*rbe0+88.676*math.log(SOBP)-445.726,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-202,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 67.5*rbe1-119.5,rbe1)
+     rbe3= np.where((rbe2>= 2.282) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>=1) & (rbe3< 2.282) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==380 and SOBP==50:#(rBEth=2.188)
+     rbe0_1= np.where((image_p>=0.476)&(image_p<0.725)&(rbeth2>0.296),(10.292*math.log(SOBP)-29.9)*(rbe0**2)+(-59.544*math.log(SOBP)+273.83)*rbe0+88.676*math.log(SOBP)-445.726,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-202,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 67.5*rbe1-119.5,rbe1)
+     rbe3= np.where((rbe2>= 2.188) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>=1) & (rbe3< 2.188) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==380 and SOBP==60:#(rBEth=2.111)
+     rbe0_1= np.where((image_p>=0.473)&(image_p<0.747)&(rbeth2>0.296),(10.292*math.log(SOBP)-29.9)*(rbe0**2)+(-59.544*math.log(SOBP)+273.83)*rbe0+88.676*math.log(SOBP)-445.726,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-202,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 67.5*rbe1-119.5,rbe1)
+     rbe3= np.where((rbe2>= 2.111) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>=1) & (rbe3< 2.111) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==380 and SOBP==65:#(rBEth=2.0469) 
+     rbe0_1= np.where((image_p>=0.469)&(image_p<0.731)&(rbeth2>0.296),(10.292*math.log(SOBP)-29.9)*(rbe0**2)+(-59.544*math.log(SOBP)+273.83)*rbe0+88.676*math.log(SOBP)-445.726,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-202,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 67.5*rbe1-119.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0469) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>=1) & (rbe3< 2.0469) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==380 and SOBP==70:#(rBEth=2.05)
+     rbe0_1= np.where((image_p>=0.466)&(image_p<0.715)&(rbeth2>0.296),(10.292*math.log(SOBP)-29.9)*(rbe0**2)+(-59.544*math.log(SOBP)+273.83)*rbe0+88.676*math.log(SOBP)-445.726,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-202,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 67.5*rbe1-119.5,rbe1)
+     rbe3= np.where((rbe2>= 2.05) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>=1) & (rbe3< 2.05) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==380 and SOBP==75:#(rBEth=2.023)
+     rbe0_1= np.where((image_p>=0.464)&(image_p<0.717)&(rbeth2>0.296),(10.292*math.log(SOBP)-29.9)*(rbe0**2)+(-59.544*math.log(SOBP)+273.83)*rbe0+88.676*math.log(SOBP)-445.726,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-202,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 67.5*rbe1-119.5,rbe1)
+     rbe3= np.where((rbe2>= 2.023) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>=1) & (rbe3< 2.05) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==380 and SOBP==80:#(rBEth=1.996)
+     rbe0_1= np.where((image_p>=0.462)&(image_p<0.719)&(rbeth2>0.296),(10.292*math.log(SOBP)-29.9)*(rbe0**2)+(-59.544*math.log(SOBP)+273.83)*rbe0+88.676*math.log(SOBP)-445.726,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-202,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 67.5*rbe1-119.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>=1.996) & (rbe3< 2.0) , 33*rbe3-33,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4<1.996) ,28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+    
+    if Energy==380 and SOBP==90:#(rBEth=1.952)
+     rbe0_1= np.where((image_p>=0.372)&(image_p<0.664)&(rbeth2>0.296),(10.292*math.log(SOBP)-29.9)*(rbe0**2)+(-59.544*math.log(SOBP)+273.83)*rbe0+88.676*math.log(SOBP)-445.726,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-202,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 67.5*rbe1-119.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>=1.952) & (rbe3< 2.0) , 33*rbe3-33,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4<1.952) ,28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+     
+    if Energy==380 and SOBP==100:#(rBEth=1.917)
+     rbe0_1= np.where((image_p>=0.446)&(image_p<0.704)&(rbeth2>0.296),(10.292*math.log(SOBP)-29.9)*(rbe0**2)+(-59.544*math.log(SOBP)+273.83)*rbe0+88.676*math.log(SOBP)-445.726,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-202,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 67.5*rbe1-119.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>=1.917) & (rbe3< 2.0) , 33*rbe3-33,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4<1.918) ,28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+    
+    if Energy==380 and SOBP==110:#(rBEth=1.876)
+     rbe0_1= np.where((image_p>=0.449)&(image_p<0.670)&(rbeth2>0.296),(10.292*math.log(SOBP)-29.9)*(rbe0**2)+(-59.544*math.log(SOBP)+273.83)*rbe0+88.676*math.log(SOBP)-445.726,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-202,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 67.5*rbe1-119.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>=1.876) & (rbe3< 2.0) , 33*rbe3-33,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4<1.876) ,28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+     
+    if Energy==380 and SOBP==120:#(rBEth=1.855)
+     rbe0_1= np.where((image_p>=0.442)&(image_p<0.647)&(rbeth2>0.296),(10.292*math.log(SOBP)-29.9)*(rbe0**2)+(-59.544*math.log(SOBP)+273.83)*rbe0+88.676*math.log(SOBP)-445.726,rbe0) 
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-202,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 67.5*rbe1-119.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>=1.855) & (rbe3< 2.0) , 33*rbe3-33,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4<1.855) ,28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+
+#Energy==400   
+    if Energy==400 and SOBP==30:#(rBEth=2.396)
+     rbe0_1= np.where((image_p>=0.539)&(image_p<0.782)&(rbeth2>0.237),(6.956*math.log(SOBP)-4.774)*(rbe0**2)+(-35.66*math.log(SOBP)+115.31)*rbe0+50.714*math.log(SOBP)-215.35,rbe0)
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-200,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 72.5*rbe1-132.5,rbe1)
+     rbe3= np.where((rbe2>= 2.396) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>= 1) & (rbe3< 2.396) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==400 and SOBP==40:#(rBEth=2.264)
+     rbe0_1= np.where((image_p>=0.508)&(image_p<0.753)&(rbeth2>0.237),(6.956*math.log(SOBP)-4.774)*(rbe0**2)+(-35.66*math.log(SOBP)+115.31)*rbe0+50.714*math.log(SOBP)-215.35,rbe0)
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-200,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 72.5*rbe1-132.5,rbe1)
+     rbe3= np.where((rbe2>= 2.264) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>= 1) & (rbe3< 2.264) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==400 and SOBP==50:#(rBEth=2.172)
+     rbe0_1= np.where((image_p>=0.509)&(image_p<0.729)&(rbeth2>0.237),(6.956*math.log(SOBP)-4.774)*(rbe0**2)+(-35.66*math.log(SOBP)+115.31)*rbe0+50.714*math.log(SOBP)-215.35,rbe0)
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-200,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 72.5*rbe1-132.5,rbe1)
+     rbe3= np.where((rbe2>= 2.172) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>= 1) & (rbe3< 2.172) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+     
+    if Energy==400 and SOBP==60:#(rBEth=2.099)
+     rbe0_1= np.where((image_p>=0.506)&(image_p<0.756)&(rbeth2>0.237),(6.956*math.log(SOBP)-4.774)*(rbe0**2)+(-35.66*math.log(SOBP)+115.31)*rbe0+50.714*math.log(SOBP)-215.35,rbe0)
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-200,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 72.5*rbe1-132.5,rbe1)
+     rbe3= np.where((rbe2>= 2.099) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>= 1) & (rbe3< 2.099) , 28*rbe3-28,rbe3)
+     let = np.where((rbe4>= 0) & (rbe4< 1), 0, rbe4)
+
+    if Energy==400 and SOBP==70:#(rBEth=2.039)
+     rbe0_1= np.where((image_p>=0.496)&(image_p<0.713)&(rbeth2>0.237),(6.956*math.log(SOBP)-4.774)*(rbe0**2)+(-35.66*math.log(SOBP)+115.31)*rbe0+50.714*math.log(SOBP)-215.35,rbe0)
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-200,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 72.5*rbe1-132.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>= 2.039) & (rbe3< 2.0) , 33*rbe3-33,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4< 2.039) , 28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+     
+    if Energy==400 and SOBP==80:#(rBEth=1.987)
+     rbe0_1= np.where((image_p>=0.486)&(image_p<0.720)&(rbeth2>0.237),(6.956*math.log(SOBP)-4.774)*(rbe0**2)+(-35.66*math.log(SOBP)+115.31)*rbe0+50.714*math.log(SOBP)-215.35,rbe0)
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-200,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 72.5*rbe1-132.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>= 1.987) & (rbe3< 2.0) , 33*rbe3-33,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4< 1.987) , 28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+     
+    if Energy==400 and SOBP==90:#(rBEth=1.943)
+     rbe0_1= np.where((image_p>=0.561)&(image_p<0.697)&(rbeth2>0.237),(6.956*math.log(SOBP)-4.774)*(rbe0**2)+(-35.66*math.log(SOBP)+115.31)*rbe0+50.714*math.log(SOBP)-215.35,rbe0)
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-200,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 72.5*rbe1-132.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>= 1.943) & (rbe3< 2.0) , 33*rbe3-33,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4< 1.983) , 28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+     
+    if Energy==400 and SOBP==100:#(rBEth=1.909)
+     rbe0_1= np.where((image_p>=0.481)&(image_p<0.706)&(rbeth2>0.237),(6.956*math.log(SOBP)-4.774)*(rbe0**2)+(-35.66*math.log(SOBP)+115.31)*rbe0+50.714*math.log(SOBP)-215.35,rbe0)
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-200,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 72.5*rbe1-132.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>= 1.909) & (rbe3< 2.0) , 33*rbe3-33,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4< 1.91) , 28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+     
+    if Energy==400 and SOBP==110:#(rBEth=1.877)
+     rbe0_1= np.where((image_p>=0.464)&(image_p<0.674)&(rbeth2>0.237),(6.956*math.log(SOBP)-4.774)*(rbe0**2)+(-35.66*math.log(SOBP)+115.31)*rbe0+50.714*math.log(SOBP)-215.35,rbe0)
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-200,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 72.5*rbe1-132.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>= 1.877) & (rbe3< 2.0) , 33*rbe3-33,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4< 1.877) , 28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+     
+    if Energy==400 and SOBP==120:#(rBEth=1.847)
+     rbe0_1= np.where((image_p>=0.469)&(image_p<0.650)&(rbeth2>0.237),(6.956*math.log(SOBP)-4.774)*(rbe0**2)+(-35.66*math.log(SOBP)+115.31)*rbe0+50.714*math.log(SOBP)-215.35,rbe0)
+     rbe1= np.where((rbe0_1>=3.0)&(rbe0_1<5), 95*rbe0_1-200,rbe0_1)
+     rbe2= np.where((rbe1>= 2.6) & (rbe1< 3.0) , 72.5*rbe1-132.5,rbe1)
+     rbe3= np.where((rbe2>= 2.0) & (rbe2< 2.6) , 23/0.6*rbe2-23/0.3+33,rbe2)
+     rbe4= np.where((rbe3>= 1.847) & (rbe3< 2.0) , 33*rbe3-33,rbe3)
+     rbe5= np.where((rbe4>= 1) & (rbe4< 1.847) , 28*rbe4-28,rbe4)
+     let = np.where((rbe5>= 0) & (rbe5< 1), 0, rbe5)
+    
+    fraction=plan[0x300A,0x0070][i][0x300A,0x0078].value #The number of times the beam has been irradiated
+    total_letdose+=let*image_p*fraction #Multiply the LET, the physical dose, and the number of irradiations for each beam and sum them up.
+    total_dose+=image_p*fraction #Multiply the physical dose and the number of irradiations for each beam and sum them up.
+    ave_let=np.where(total_letdose==0,0,total_letdose/total_dose) #The dose average LET
